@@ -1,0 +1,33 @@
+name: "\U0001F41B Bug"
+description: Fix bugs or bad implementations.
+body:
+  - type: textarea
+    id: bug
+    validations:
+      required: true
+    attributes:
+      label: Bug Description
+      description: |
+        A clear and concise description of what the bug is.
+
+  - type: textarea
+    id: todo
+    validations:
+      required: true
+    attributes:
+      label: To-Dos
+      description: |
+        List out to-dos to fix the bug.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+
+  - type: textarea
+    id: note
+    validations:
+      required: false
+    attributes:
+      label: Notes
+      description: |
+        Any additional notes about the bug.
