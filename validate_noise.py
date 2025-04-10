@@ -79,8 +79,7 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, :-1] = noise[:, :-1]
     elif apply_target_noise_only == "front":
         init_latents[:, 1:] = noise[:, 1:]
-    else:
-        raise ValueError(f"apply_target_noise_only must be either 'back' or 'front', but got {apply_target_noise_only}")
+        
     return init_latents
 
 @torch.no_grad()
@@ -150,7 +149,7 @@ if __name__ == "__main__":
             # video = retrieve_video(pipe, init_latents)
             # export_to_video(video, "test.mp4")
             # assert False, "stop here"
-            front-long 구현해야됨됨
+            
             video = pipe(prompt, 
                          generator=generator, 
                          width=args.width, 

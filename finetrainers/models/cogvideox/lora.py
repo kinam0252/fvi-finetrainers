@@ -1,12 +1,12 @@
 from typing import Any, Dict, List, Optional, Union
 
 import torch
-from diffusers import AutoencoderKLCogVideoX, CogVideoXDDIMScheduler, CogVideoXPipeline, CogVideoXTransformer3DModel
+from diffusers import AutoencoderKLCogVideoX, CogVideoXDDIMScheduler, CogVideoXPipeline
 from PIL import Image
 from transformers import T5EncoderModel, T5Tokenizer
 
 from .utils import prepare_rotary_positional_embeddings
-
+from .model import CogVideoXTransformer3DModel
 
 def load_condition_models(
     model_id: str = "THUDM/CogVideoX-5b",
@@ -206,6 +206,7 @@ def forward_pass(
     timesteps: torch.LongTensor,
     ofs_emb: Optional[torch.Tensor] = None,
     return_hidden_states: Optional[List[int]] = None,
+    apply_target_noise_only: bool = False,
     **kwargs,
 ) -> torch.Tensor:
     # Just hardcode for now. In Diffusers, we will refactor such that RoPE would be handled within the model itself.
@@ -248,6 +249,7 @@ def forward_pass(
         image_rotary_emb=image_rotary_emb,
         return_dict=False,
         return_hidden_states=return_hidden_states,
+        apply_target_noise_only=apply_target_noise_only,
     )
     if return_hidden_states is not None:
         velocity, hidden_states_list = output

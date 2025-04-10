@@ -313,6 +313,7 @@ class Args:
     resume_from_checkpoint: Optional[str] = None
     enable_slicing: bool = False
     enable_tiling: bool = False
+    apply_target_noise_only: Optional[str] = None
 
     # Optimizer arguments
     optimizer: str = "adamw"
@@ -420,6 +421,7 @@ class Args:
                 "resume_from_checkpoint": self.resume_from_checkpoint,
                 "enable_slicing": self.enable_slicing,
                 "enable_tiling": self.enable_tiling,
+                "apply_target_noise_only": self.apply_target_noise_only,
             },
             "optimizer_arguments": {
                 "optimizer": self.optimizer,
@@ -812,6 +814,13 @@ def _add_training_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Whether or not to use VAE tiling for saving memory.",
     )
+    parser.add_argument(
+        "--apply_target_noise_only",
+        type=str,
+        default=None,
+        choices=["front", "back", "front-long", None],
+        help="Whether or not to apply noise only to the target. Choose between ['front', 'back', None]",
+    )
 
 
 def _add_optimizer_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1099,7 +1108,7 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
     result_args.resume_from_checkpoint = args.resume_from_checkpoint
     result_args.enable_slicing = args.enable_slicing
     result_args.enable_tiling = args.enable_tiling
-
+    result_args.apply_target_noise_only = args.apply_target_noise_only
     # Optimizer arguments
     result_args.optimizer = args.optimizer or "adamw"
     result_args.use_8bit_bnb = args.use_8bit_bnb

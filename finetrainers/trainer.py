@@ -724,8 +724,6 @@ class Trainer:
                     )
                     sigmas = expand_tensor_dims(sigmas, ndim=noise.ndim)
 
-                    # TODO(aryan): We probably don't need calculate_noisy_latents because we can determine the type of
-                    # scheduler and calculate the noisy latents accordingly. Look into this later.
                     if "calculate_noisy_latents" in self.model_config.keys():
                         noisy_latents = self.model_config["calculate_noisy_latents"](
                             scheduler=self.scheduler,
@@ -733,9 +731,24 @@ class Trainer:
                             latents=latent_conditions["latents"],
                             timesteps=timesteps,
                         )
+                        if self.args.apply_target_noise_only == "front":
+                            # Replace only the first frame with original latents
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                        elif self.args.apply_target_noise_only == "back":
+                            # Replace only the last frame with original latents
+                            noisy_latents[:, -1] = latent_conditions["latents"][:, -1]
+                        elif self.args.apply_target_noise_only == "front-long":
+                            noisy_latents[:, :6] = latent_conditions["latents"][:, :6]
                     else:
-                        # Default to flow-matching noise addition
-                        noisy_latents = (1.0 - sigmas) * latent_conditions["latents"] + sigmas * noise
+                        raise NotImplementedError("OFs noise is not implemented")
+                        # noise_latents shape = (1, 13, 16, 64, 96)
+                        if self.args.apply_target_noise_only:
+                            # Add noise to all frames and then replace only the last frame with original latents
+                            noisy_latents = (1.0 - sigmas) * latent_conditions["latents"] + sigmas * noise
+                            noisy_latents[:, -1] = latent_conditions["latents"][:, -1]
+                        else:
+                            # Default to flow-matching noise addition for all frames
+                            noisy_latents = (1.0 - sigmas) * latent_conditions["latents"] + sigmas * noise
                         noisy_latents = noisy_latents.to(latent_conditions["latents"].dtype)
 
                     latent_conditions.update({"noisy_latents": noisy_latents})
@@ -755,6 +768,7 @@ class Trainer:
                         **latent_conditions,
                         **text_conditions,
                         return_hidden_states=self.args.return_hidden_states,
+                        apply_target_noise_only=self.args.apply_target_noise_only,
                     )
                     target = prepare_target(
                         scheduler=self.scheduler, noise=noise, latents=latent_conditions["latents"]

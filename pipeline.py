@@ -20,16 +20,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 from transformers import T5EncoderModel, T5Tokenizer
 
-from ...callbacks import MultiPipelineCallbacks, PipelineCallback
-from ...loaders import CogVideoXLoraLoaderMixin
-from ...models import AutoencoderKLCogVideoX, CogVideoXTransformer3DModel
-from ...models.embeddings import get_3d_rotary_pos_embed
-from ...pipelines.pipeline_utils import DiffusionPipeline
-from ...schedulers import CogVideoXDDIMScheduler, CogVideoXDPMScheduler
-from ...utils import is_torch_xla_available, logging, replace_example_docstring
-from ...utils.torch_utils import randn_tensor
-from ...video_processor import VideoProcessor
-from .pipeline_output import CogVideoXPipelineOutput
+from diffusers.callbacks import MultiPipelineCallbacks, PipelineCallback
+from diffusers.loaders import CogVideoXLoraLoaderMixin
+from diffusers.models import AutoencoderKLCogVideoX, CogVideoXTransformer3DModel
+from diffusers.models.embeddings import get_3d_rotary_pos_embed
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.schedulers import CogVideoXDDIMScheduler, CogVideoXDPMScheduler
+from diffusers.utils import is_torch_xla_available, logging, replace_example_docstring
+from diffusers.utils.torch_utils import randn_tensor
+from diffusers.video_processor import VideoProcessor
+from diffusers.pipelines.cogvideo.pipeline_output import CogVideoXPipelineOutput
 
 
 if is_torch_xla_available():
@@ -529,6 +529,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
+        apply_target_noise_only: bool = False,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -703,6 +704,13 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         # 8. Denoising loop
         num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
+        @torch.no_grad()
+        def retrieve_video(init_latents,):
+            init_latents = init_latents.to("cuda")
+            video = self.decode_latents(init_latents)
+            video = self.video_processor.postprocess_video(video=video, output_type="pil")[0]
+            return video
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             # for DPM-solver++
             old_pred_original_sample = None
@@ -717,6 +725,10 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
+                # video = retrieve_video(latents)
+                # from diffusers.utils import export_to_video
+                # export_to_video(video, f"my_test/video_{i}.mp4")
+
                 # predict noise model_output
                 noise_pred = self.transformer(
                     hidden_states=latent_model_input,
@@ -725,6 +737,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     image_rotary_emb=image_rotary_emb,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
+                    apply_target_noise_only=apply_target_noise_only,
                 )[0]
                 noise_pred = noise_pred.float()
 
