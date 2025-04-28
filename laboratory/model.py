@@ -126,6 +126,7 @@ class CogVideoXBlock(nn.Module):
         apply_target_noise_only: bool = False,
         target_frame_mask: Optional[torch.Tensor] = None,
         zero_emb: Optional[torch.Tensor] = None,
+        text_emb: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         text_seq_length = encoder_hidden_states.size(1)
         attention_kwargs = attention_kwargs or {}
@@ -133,11 +134,14 @@ class CogVideoXBlock(nn.Module):
         # apply_target_noise_only가 True이고 마스크가 제공된 경우
         if apply_target_noise_only and target_frame_mask is not None and zero_emb is not None:
             # norm & modulate
-            norm_hidden_states_target, norm_encoder_hidden_states_target, gate_msa_target, enc_gate_msa_target = self.norm1(
+            norm_hidden_states_target, _, gate_msa_target, _ = self.norm1(
                 hidden_states, encoder_hidden_states, zero_emb
             )
-            norm_hidden_states_others, norm_encoder_hidden_states_others, gate_msa_others, enc_gate_msa_others = self.norm1(
+            norm_hidden_states_others, _, gate_msa_others, _ = self.norm1(
                 hidden_states, encoder_hidden_states, temb
+            )
+            _, norm_encoder_hidden_states, _, enc_gate_msa = self.norm1(
+                hidden_states, encoder_hidden_states, text_emb
             )
             
             # 마스크를 사용하여 결합
@@ -146,13 +150,12 @@ class CogVideoXBlock(nn.Module):
                 norm_hidden_states_target, 
                 norm_hidden_states_others
             )
-            norm_encoder_hidden_states = norm_encoder_hidden_states_others  # 텍스트 인코더는 영향 없음
+            
             gate_msa = torch.where(
                 target_frame_mask.unsqueeze(-1), 
                 gate_msa_target, 
                 gate_msa_others
             )
-            enc_gate_msa = enc_gate_msa_others  # 텍스트 인코더는 영향 없음
         else:
             # 기존 코드
             norm_hidden_states, norm_encoder_hidden_states, gate_msa, enc_gate_msa = self.norm1(
@@ -173,11 +176,14 @@ class CogVideoXBlock(nn.Module):
 
         # 두 번째 norm & modulate도 동일한 방식으로 처리
         if apply_target_noise_only and target_frame_mask is not None and zero_emb is not None:
-            norm_hidden_states_target, norm_encoder_hidden_states_target, gate_ff_target, enc_gate_ff_target = self.norm2(
+            norm_hidden_states_target, _, gate_ff_target, _ = self.norm2(
                 hidden_states, encoder_hidden_states, zero_emb
             )
-            norm_hidden_states_others, norm_encoder_hidden_states_others, gate_ff_others, enc_gate_ff_others = self.norm2(
+            norm_hidden_states_others, _, gate_ff_others, _ = self.norm2(
                 hidden_states, encoder_hidden_states, temb
+            )
+            _, norm_encoder_hidden_states, _, enc_gate_ff = self.norm2(
+                hidden_states, encoder_hidden_states, text_emb
             )
             
             norm_hidden_states = torch.where(
@@ -185,13 +191,11 @@ class CogVideoXBlock(nn.Module):
                 norm_hidden_states_target, 
                 norm_hidden_states_others
             )
-            norm_encoder_hidden_states = norm_encoder_hidden_states_others
             gate_ff = torch.where(
                 target_frame_mask.unsqueeze(-1), 
                 gate_ff_target, 
                 gate_ff_others
             )
-            enc_gate_ff = enc_gate_ff_others
         else:
             norm_hidden_states, norm_encoder_hidden_states, gate_ff, enc_gate_ff = self.norm2(
                 hidden_states, encoder_hidden_states, temb
@@ -493,6 +497,8 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
         return_dict: bool = True,
         return_hidden_states: Optional[List[int]] = None,
         apply_target_noise_only: str = None,
+        text_timestep = None,
+        cond_timestep = None,
     ):
         if apply_target_noise_only == "front-long-none":
             apply_target_noise_only = None
@@ -523,11 +529,15 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
         # there might be better ways to encapsulate this.
         t_emb = t_emb.to(dtype=hidden_states.dtype)
         emb = self.time_embedding(t_emb, timestep_cond)
+        
+        text_t_emb = self.time_proj(text_timestep)
+        text_t_emb = text_t_emb.to(dtype=hidden_states.dtype)
+        text_emb = self.time_embedding(text_t_emb, timestep_cond)
 
         # Create zero timestep embedding if needed
         if apply_target_noise_only:
             assert timestep_cond == None
-            zero_timestep = torch.zeros_like(timesteps)
+            zero_timestep = torch.zeros_like(cond_timestep)
             zero_t_emb = self.time_proj(zero_timestep)
             zero_t_emb = zero_t_emb.to(dtype=hidden_states.dtype)
             zero_emb = self.time_embedding(zero_t_emb, timestep_cond)
@@ -571,9 +581,6 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
                 print("apply_target_noise_only: front-last-long-long")
                 frame_indices = torch.arange(num_frames, device=hidden_states.device)
                 target_frame_indices = (frame_indices < 5) | (frame_indices >= num_frames - 3)
-            elif apply_target_noise_only == "Fr81-front-long":
-                print("apply_target_noise_only: Fr81-front-long")
-                target_frame_indices = torch.arange(num_frames, device=hidden_states.device) < 10
             else:
                 raise ValueError(f"apply_target_noise_only must be either 'back', 'front', or 'front-long', but got {apply_target_noise_only}")
                 
@@ -608,6 +615,7 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
                     apply_target_noise_only=apply_target_noise_only,
                     target_frame_mask=target_frame_mask,
                     zero_emb=zero_emb,
+                    text_emb=text_emb,
                 )
             if return_hidden_states is not None and i in return_hidden_states:
                 hidden_states_list[i] = hidden_states

@@ -530,6 +530,8 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
         apply_target_noise_only: bool = False,
+        text_timestep_idx=None,
+        cond_timestep_idx=None,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -724,6 +726,22 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
 
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
+                
+                #-------Custom timestep-------#
+                if text_timestep_idx != 50:
+                    text_timestep_idx = i if i >= text_timestep_idx else text_timestep_idx
+                    text_timestep = timesteps[text_timestep_idx]
+                else: # 50
+                    text_timestep = torch.tensor(0, device=latents.device)
+                if cond_timestep_idx != 50:
+                    cond_timestep_idx = i if i >= cond_timestep_idx else cond_timestep_idx
+                    cond_timestep = timesteps[cond_timestep_idx]
+                else: # 50
+                    cond_timestep = torch.tensor(0, device=latents.device)
+                text_timestep = text_timestep.expand(latents.shape[0])
+                cond_timestep = cond_timestep.expand(latents.shape[0])
+                print(f"text_t: {text_timestep_idx} cond_t: {cond_timestep_idx}")
+                #------------------------------#
 
                 # video = retrieve_video(latents)
                 # from diffusers.utils import export_to_video
@@ -738,6 +756,8 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
                     apply_target_noise_only=apply_target_noise_only,
+                    text_timestep=text_timestep,
+                    cond_timestep=cond_timestep,
                 )[0]
                 noise_pred = noise_pred.float()
 

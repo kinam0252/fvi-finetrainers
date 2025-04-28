@@ -179,3 +179,5 @@ experiment_scripts/*
 scripts/
 **/*.mp4
 output/
+outputs/
+*.zip

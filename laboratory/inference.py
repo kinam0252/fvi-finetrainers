@@ -10,19 +10,21 @@ def parse_args():
         type=str,
         choices=["ltxvideo", "cogvideo"],
         required=False,
-        default = "cogvideo",
+        default="cogvideo",
         help="Type of model to use for validation"
     )
     parser.add_argument(
         "--lora_weight_path",
         type=str,
         required=False,
+        default=None,
         help="Path to LoRA weights"
     )
     parser.add_argument(
         "--dataset_dir",
         type=str,
-        required=True,
+        required=False,
+        default="/home/nas4_user/kinamkim/video-in-context-lora/dataset/P2V/dataset",
         help="Path to dataset to use for validation"
     )
     parser.add_argument(
@@ -52,7 +54,7 @@ def parse_args():
     parser.add_argument(
         "--apply_target_noise_only",
         type=str,
-        default=None,
+        default="front",
         # required=True,
         help="Apply noise only to target frame"
     )
@@ -113,17 +115,25 @@ if __name__ == "__main__":
 
         elif args.model_type == "cogvideo":
             from pipeline import CogVideoXPipeline
-            from finetrainers.models.cogvideox.model import CogVideoXTransformer3DModel
+            from model import CogVideoXTransformer3DModel
             from diffusers.utils import export_to_video, load_video
+            
+            #------Config------# 0 ~ 49, 50
+            # text_timesteps = [0]
+            text_timesteps = [i for i in range(50)]
+            # cond_timesteps = [i for i in range(50, -1, -1)]
+            cond_timesteps = [50]
+            #------------------#
+            
             model_id = "/home/nas4_user/kinamkim/checkpoint/cogvideox-5b"
             pipe = CogVideoXPipeline.from_pretrained(
                 model_id, torch_dtype=torch.bfloat16
-            ).to("cuda")
-            pipe.transformer.to("cpu")
+            )
             pipe.transformer = CogVideoXTransformer3DModel.from_pretrained(
                 model_id, subfolder="transformer", torch_dtype=torch.bfloat16
-            ).to("cuda")
-            # pipe.enable_model_cpu_offload(device="cuda")
+            )
+            pipe.to("cuda")
+            pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
             if args.lora_weight_path:
@@ -140,7 +150,7 @@ if __name__ == "__main__":
         else:
             savedir = os.path.join(savedir, "None")
         dataset_name = "/".join(args.dataset_dir.split("/")[-2:])
-        savedir = os.path.join(savedir, dataset_name)
+        savedir = f"laboratory/outputs/{args.apply_target_noise_only}"
         os.makedirs(savedir, exist_ok=True)
         
         video_dir = os.path.join(args.dataset_dir, "videos")
@@ -149,29 +159,38 @@ if __name__ == "__main__":
             prompts = f.readlines()
         
         generator = torch.Generator(device=pipe.device).manual_seed(args.seed)
+        data_basename = os.path.join(*args.dataset_dir.split(os.sep)[-2:])
         for i, prompt in enumerate(prompts[:args.num_videos]):
-            print(f"Generating video {i+1}: {prompt[:100]}...")
-            video_path = os.path.join(video_dir, f"{i+1}.mp4")
-            if os.path.exists(os.path.join(savedir, f"output_{i}.mp4")):
-                print(f"Skipping path: {video_path}")
-                continue
-            print(f"video_path: {video_path}")
-            init_latents = process_video(pipe, 
-                                         video_path, 
-                                         torch.bfloat16, 
-                                         generator, 
-                                         args.height, 
-                                         args.width,
-                                         args.apply_target_noise_only)
-            
-            # video = retrieve_video(pipe, init_latents)
-            # export_to_video(video, "test.mp4")
-            # assert False, "stop here"
-            # front-long 구현해야됨됨
-            video = pipe(prompt, 
-                         generator=generator, 
-                         width=args.width, 
-                         height=args.height, 
-                         latents=init_latents,
-                         apply_target_noise_only=args.apply_target_noise_only).frames[0]
-            export_to_video(video, os.path.join(savedir, f"output_{i}.mp4"))
+            for text_timestep in text_timesteps:
+                for cond_timestep in cond_timesteps:
+                    print(f"Generating video {i+1}: {prompt[:100]}...")
+                    print(f"text_t: {text_timestep} cond_t: {cond_timestep}")
+                    video_path = os.path.join(video_dir, f"{i+1}.mp4")
+                    
+                    # Create directory with text_t and cond_t
+                    current_savedir = os.path.join(savedir, f"text_{text_timestep}_cond_{cond_timestep}/{data_basename}/")
+                    os.makedirs(current_savedir, exist_ok=True)
+                    
+                    # Use original video name for output
+                    output_filename = f"{i+1}.mp4"
+                    if os.path.exists(os.path.join(current_savedir, output_filename)):
+                        print(f"Skipping path: {video_path}")
+                        continue
+                    print(f"video_path: {video_path}")
+                    init_latents = process_video(pipe, 
+                                                video_path, 
+                                                torch.bfloat16, 
+                                                generator, 
+                                                args.height, 
+                                                args.width,
+                                                args.apply_target_noise_only)
+                    
+                    video = pipe(prompt, 
+                                generator=generator, 
+                                width=args.width, 
+                                height=args.height, 
+                                latents=init_latents,
+                                apply_target_noise_only=args.apply_target_noise_only,
+                                text_timestep_idx=text_timestep,
+                                cond_timestep_idx=cond_timestep).frames[0]
+                    export_to_video(video, os.path.join(current_savedir, output_filename))

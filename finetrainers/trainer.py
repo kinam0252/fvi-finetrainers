@@ -731,14 +731,25 @@ class Trainer:
                             latents=latent_conditions["latents"],
                             timesteps=timesteps,
                         )
+                        print(f"[DEBUG] Applied noies mode : {self.args.apply_target_noise_only}")
                         if self.args.apply_target_noise_only == "front":
                             # Replace only the first frame with original latents
                             noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
                         elif self.args.apply_target_noise_only == "back":
                             # Replace only the last frame with original latents
                             noisy_latents[:, -1] = latent_conditions["latents"][:, -1]
-                        elif self.args.apply_target_noise_only == "front-long":
+                        elif self.args.apply_target_noise_only == "front-long" or self.args.apply_target_noise_only == "front-long-none":
                             noisy_latents[:, :6] = latent_conditions["latents"][:, :6]
+                        elif self.args.apply_target_noise_only == "front-last-long":
+                            noisy_latents[:, :6] = latent_conditions["latents"][:, :6]
+                            noisy_latents[:, -1] = latent_conditions["latents"][:, -1]
+                        elif self.args.apply_target_noise_only == "front-last-long-long":
+                            noisy_latents[:, :5] = latent_conditions["latents"][:, :5]
+                            noisy_latents[:, -3:] = latent_conditions["latents"][:, -3:]
+                        elif self.args.apply_target_noise_only == "Fr81-front-long":
+                            noisy_latents[:, :10] = latent_conditions["latents"][:, :10]
+                        else:
+                            raise NotImplementedError("OFs noise is not implemented")
                     else:
                         raise NotImplementedError("OFs noise is not implemented")
                         # noise_latents shape = (1, 13, 16, 64, 96)
@@ -760,7 +771,7 @@ class Trainer:
                         flow_weighting_scheme=self.args.flow_weighting_scheme,
                     )
                     weights = expand_tensor_dims(weights, noise.ndim)
-
+                    self.transformer.to("cuda")
                     pred = self.model_config["forward_pass"](
                         transformer=self.transformer,
                         scheduler=self.scheduler,
@@ -876,22 +887,38 @@ class Trainer:
 
         accelerator.end_training()
 
+    def load_videos_and_prompts(self, dataset_dir):
+        # 비디오 폴더 경로
+        videos_dir = os.path.join(dataset_dir, "videos")
+        # prompt.txt 파일 경로
+        prompt_file = os.path.join(dataset_dir, "prompt.txt")
+        
+        # 비디오 경로들 (정렬까지 해줌: 1.mp4, 2.mp4, ...)
+        video_filenames = sorted(
+            f for f in os.listdir(videos_dir) if f.endswith(".mp4")
+        )
+        video_paths = [os.path.join(videos_dir, fname) for fname in video_filenames]
+        
+        # 프롬프트 읽기
+        with open(prompt_file, "r", encoding="utf-8") as f:
+            prompts = [line.strip() for line in f]
+        
+        # 파일 개수와 프롬프트 개수 일치 체크 (선택)
+        if len(video_paths) != len(prompts):
+            raise ValueError(f"Number of videos ({len(video_paths)}) and prompts ({len(prompts)}) do not match!")
+        
+        return video_paths, prompts
+
     def validate(self, step: int, final_validation: bool = False) -> None:
         logger.info("Starting validation")
 
         accelerator = self.state.accelerator
-        num_validation_samples = len(self.args.validation_prompts)
-
-        if num_validation_samples == 0:
-            logger.warning("No validation samples found. Skipping validation.")
-            if accelerator.is_main_process:
-                save_model_card(
-                    args=self.args,
-                    repo_id=self.state.repo_id,
-                    videos=None,
-                    validation_prompts=None,
-                )
-            return
+        video_paths, prompts = self.load_videos_and_prompts(self.args.validation_dataset)
+        assert len(video_paths) == len(prompts)
+        num_validation_samples = len(video_paths)
+        num_frames, height, width = self.args.video_resolution_buckets[0]
+        frame_rate = self.args.validation_frame_rate
+        apply_target_noise_only = self.args.apply_target_noise_only
 
         self.transformer.eval()
 
@@ -903,19 +930,14 @@ class Trainer:
         all_processes_artifacts = []
         prompts_to_filenames = {}
         for i in range(num_validation_samples):
+            if i == self.args.validation_count:
+                break
+            video = video_paths[i]
+            prompt = prompts[i]
             # Skip current validation on all processes but one
             if i % accelerator.num_processes != accelerator.process_index:
                 continue
 
-            prompt = self.args.validation_prompts[i]
-            image = self.args.validation_images[i]
-            video = self.args.validation_videos[i]
-            height = self.args.validation_heights[i]
-            width = self.args.validation_widths[i]
-            num_frames = self.args.validation_num_frames[i]
-            frame_rate = self.args.validation_frame_rate
-            if image is not None:
-                image = load_image(image)
             if video is not None:
                 video = load_video(video)
 
@@ -926,7 +948,7 @@ class Trainer:
             validation_artifacts = self.model_config["validation"](
                 pipeline=pipeline,
                 prompt=prompt,
-                image=image,
+                image=None,
                 video=video,
                 height=height,
                 width=width,
@@ -936,12 +958,14 @@ class Trainer:
                 generator=torch.Generator(device=accelerator.device).manual_seed(
                     self.args.seed if self.args.seed is not None else 0
                 ),
+                apply_target_noise_only=apply_target_noise_only,
+                enable_model_cpu_offload=self.args.enable_model_cpu_offload,
                 # todo support passing `fps` for supported pipelines.
             )
 
             prompt_filename = string_to_filename(prompt)[:25]
             artifacts = {
-                "image": {"type": "image", "value": image},
+                "image": {"type": "image", "value": None},
                 "video": {"type": "video", "value": video},
             }
             for i, (artifact_type, artifact_value) in enumerate(validation_artifacts):
@@ -960,7 +984,7 @@ class Trainer:
 
                 extension = "png" if artifact_type == "image" else "mp4"
                 filename = "validation-" if not final_validation else "final-"
-                filename += f"{step}-{accelerator.process_index}-{index}-{prompt_filename}.{extension}"
+                filename += f"{step}-{accelerator.process_index}-{index}-{prompt_filename}-{i}.{extension}"
                 if accelerator.is_main_process and extension == "mp4":
                     prompts_to_filenames[prompt] = filename
                 filename = os.path.join(self.args.output_dir, filename)

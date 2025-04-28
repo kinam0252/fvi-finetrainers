@@ -529,7 +529,8 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         max_sequence_length: int = 226,
-        apply_target_noise_only: bool = False,
+        apply_target_noise_only: str = "front",
+        video_latents: Optional[torch.FloatTensor] = None,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -715,6 +716,9 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             # for DPM-solver++
             old_pred_original_sample = None
             for i, t in enumerate(timesteps):
+                noisy_video_latents = self.scheduler.add_noise(video_latents, torch.randn_like(video_latents), t) 
+                if apply_target_noise_only == "front":
+                    latents[:, :1] = noisy_video_latents[:, :1]
                 if self.interrupt:
                     continue
 
@@ -737,7 +741,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     image_rotary_emb=image_rotary_emb,
                     attention_kwargs=attention_kwargs,
                     return_dict=False,
-                    apply_target_noise_only=apply_target_noise_only,
+                    apply_target_noise_only=None,
                 )[0]
                 noise_pred = noise_pred.float()
 
@@ -748,23 +752,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     )
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
-                    if apply_target_noise_only == "front":
-                        noise_pred[:, 0] = 0
-                    elif apply_target_noise_only == "back":
-                        noise_pred[:, -1] = 0
-                    elif apply_target_noise_only == "front-long":
-                        noise_pred[:, :6] = 0
-                    elif apply_target_noise_only == "front-last-long":
-                        noise_pred[:, :6] = 0
-                        noise_pred[:, -1] = 0
-                    elif apply_target_noise_only == "front-last-long-long":
-                        noise_pred[:, :5] = 0
-                        noise_pred[:, -3:] = 0
-                    else:
-                        raise NotImplementedError
-                    
 
                 # compute the previous noisy sample x_t -> x_t-1
                 if not isinstance(self.scheduler, CogVideoXDPMScheduler):
@@ -815,3 +803,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             return (video,)
 
         return CogVideoXPipelineOutput(frames=video)
+
+
+        

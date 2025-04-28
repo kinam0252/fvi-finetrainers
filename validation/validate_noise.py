@@ -52,7 +52,6 @@ def parse_args():
         "--apply_target_noise_only",
         type=str,
         default=None,
-        required=True,
         help="Apply noise only to target frame"
     )
     return parser.parse_args()
@@ -80,6 +79,22 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
     elif apply_target_noise_only == "front":
         init_latents[:, 1:] = noise[:, 1:]
         
+    return init_latents
+
+@torch.no_grad()
+def encode_video(pipe, video_path, dtype, generator, height, width, apply_target_noise_only):
+    from diffusers.utils import load_video
+    from diffusers.pipelines.cogvideo.pipeline_cogvideox_video2video import retrieve_latents
+    from diffusers.utils.torch_utils import randn_tensor
+    video = load_video(video_path)
+    video = pipe.video_processor.preprocess_video(video, height=height, width=width)
+    video = video.to("cuda", dtype=dtype)
+    
+    video_latents = retrieve_latents(pipe.vae.encode(video))
+    init_latents = video_latents.to(dtype).permute(0, 2, 1, 3, 4)  # [B, F, C, H, W]
+    init_latents = pipe.vae_scaling_factor_image * init_latents
+    init_latents = init_latents.to(pipe.device)
+
     return init_latents
 
 @torch.no_grad()
@@ -124,6 +139,10 @@ if __name__ == "__main__":
         # Create validation_videos directory in the same folder as lora_weight_path
         lora_dir = os.path.dirname(args.lora_weight_path)
         savedir = os.path.join(lora_dir, "validation_videos")
+        if args.apply_target_noise_only:
+            savedir = os.path.join(savedir, args.apply_target_noise_only)
+        else:
+            savedir = os.path.join(savedir, "None")
         dataset_name = args.dataset_dir.split("processed/")[-1]
         savedir = os.path.join(savedir, dataset_name)
         os.makedirs(savedir, exist_ok=True)
@@ -138,14 +157,14 @@ if __name__ == "__main__":
             print(f"Generating video {i+1}: {prompt[:100]}...")
             video_path = os.path.join(video_dir, f"{i+1}.mp4")
             print(f"video_path: {video_path}")
-            init_latents = process_video(pipe, 
+            video_latents = encode_video(pipe, 
                                          video_path, 
                                          torch.bfloat16, 
                                          generator, 
                                          args.height, 
                                          args.width,
                                          args.apply_target_noise_only)
-            init_latents = init_latents.to(pipe.device)
+            video_latents = video_latents.to(pipe.device) # [B, F, C, H, W]
             # video = retrieve_video(pipe, init_latents)
             # export_to_video(video, "test.mp4")
             # assert False, "stop here"
@@ -154,6 +173,6 @@ if __name__ == "__main__":
                          generator=generator, 
                          width=args.width, 
                          height=args.height, 
-                         latents=init_latents,
-                         apply_target_noise_only=args.apply_target_noise_only).frames[0]
+                         apply_target_noise_only=args.apply_target_noise_only,
+                         video_latents=video_latents,).frames[0]
             export_to_video(video, os.path.join(savedir, f"output_{i}.mp4"))

@@ -82,19 +82,24 @@ class CogVideoXAttnProcessor2_0:
             for head_idx, (q_head, k_head, v_head) in enumerate(zip(query_heads, key_heads, value_heads)):
                 # Create mask for this head
                 with torch.no_grad():
-                    head_mask = torch.ones(full_length, full_length, device=q_head.device, requires_grad=False)
+                    # 기본값이 0인 마스크 생성
+                    head_mask = torch.zeros(full_length, full_length, device=q_head.device, requires_grad=False)
                     
                     if apply_target_noise_only == "front":
                         target_start = text_seq_length
-                        target_end = text_seq_length + num_frames
-                        head_mask[target_start:target_end, :target_start] = 0
-                        head_mask[target_start:target_end, target_end:] = 0
+                        target_end = text_seq_length + num_blocks
+                        # 타겟 프레임이 텍스트 토큰과 다른 프레임을 볼 수 없도록 마스킹
+                        head_mask[target_start:target_end, :target_start] = float("-inf")  # 텍스트 토큰 마스킹
+                        head_mask[target_start:target_end, target_end:] = float("-inf")    # 다른 프레임 마스킹
                         
                     elif apply_target_noise_only == "back":
                         target_start = text_seq_length + (num_blocks - 1) * num_frames
                         target_end = text_seq_length + num_blocks * num_frames
-                        head_mask[target_start:target_end, :target_start] = 0
-                        head_mask[target_start:target_end, :target_start] = 0
+                        # 타겟 프레임이 텍스트 토큰과 다른 프레임을 볼 수 없도록 마스킹
+                        head_mask[target_start:target_end, :target_start] = float("-inf")  # 텍스트 토큰 마스킹
+                        # head_mask[target_start:target_end, target_end:] = float("-inf")    # 다른 프레임 마스킹
+                    elif apply_target_noise_only == "front-long":
+                        raise NotImplementedError("front-long is not implemented")
                     
                     # Add batch dimension
                     head_mask = head_mask.unsqueeze(0)

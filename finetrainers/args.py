@@ -314,6 +314,10 @@ class Args:
     enable_slicing: bool = False
     enable_tiling: bool = False
     apply_target_noise_only: Optional[str] = None
+    validation_dataset: str = None
+    validation_steps: int = -1
+    validation_fps: int = 10
+    validation_count: int = 1
 
     # Optimizer arguments
     optimizer: str = "adamw"
@@ -422,6 +426,10 @@ class Args:
                 "enable_slicing": self.enable_slicing,
                 "enable_tiling": self.enable_tiling,
                 "apply_target_noise_only": self.apply_target_noise_only,
+                "validation_dataset" : self.validation_dataset,
+                "validation_steps" : self.validation_steps,
+                "validation_fps" : self.validation_fps, 
+                "validation_count": self.validation_count,
             },
             "optimizer_arguments": {
                 "optimizer": self.optimizer,
@@ -818,8 +826,27 @@ def _add_training_arguments(parser: argparse.ArgumentParser) -> None:
         "--apply_target_noise_only",
         type=str,
         default=None,
-        choices=["front", "back", "front-long", None],
         help="Whether or not to apply noise only to the target. Choose between ['front', 'back', None]",
+    )
+    parser.add_argument(
+        "--validation_dataset",
+        type=str,
+        default=None,
+    )
+    parser.add_argument(
+        "--validation_steps",
+        type=int,
+        default=-1,
+    )
+    parser.add_argument(
+        "--validation_fps",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--validation_count",
+        type=int,
+        default=1,
     )
 
 
@@ -943,12 +970,6 @@ def _add_validation_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         help="Run validation every X training epochs. Validation consists of running the validation prompt `args.num_validation_videos` times.",
-    )
-    parser.add_argument(
-        "--validation_steps",
-        type=int,
-        default=None,
-        help="Run validation every X training steps. Validation consists of running the validation prompt `args.num_validation_videos` times.",
     )
     parser.add_argument(
         "--validation_frame_rate",
@@ -1109,6 +1130,11 @@ def _map_to_args_type(args: Dict[str, Any]) -> Args:
     result_args.enable_slicing = args.enable_slicing
     result_args.enable_tiling = args.enable_tiling
     result_args.apply_target_noise_only = args.apply_target_noise_only
+    result_args.validation_dataset = args.validation_dataset
+    result_args.validation_steps = args.validation_steps
+    result_args.validation_fps = args.validation_fps 
+    result_args.validation_count = args.validation_count
+
     # Optimizer arguments
     result_args.optimizer = args.optimizer or "adamw"
     result_args.use_8bit_bnb = args.use_8bit_bnb
