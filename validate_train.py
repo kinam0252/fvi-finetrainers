@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument(
         "--num_videos",
         type=int,
-        default=100,
+        default=30,
         help="Number of videos to generate"
     )
     parser.add_argument(
@@ -55,6 +55,18 @@ def parse_args():
         default=None,
         # required=True,
         help="Apply noise only to target frame"
+    )
+    parser.add_argument(
+        "--start_index",
+        type=int,
+        default=1,
+        help="Start index (1-based) of the dataset to process"
+    )
+    parser.add_argument(
+        "--end_index",
+        type=int,
+        default=None,
+        help="End index (1-based, inclusive) of the dataset to process"
     )
     return parser.parse_args()
 
@@ -156,7 +168,7 @@ if __name__ == "__main__":
             pipe.transformer = CogVideoXTransformer3DModel.from_pretrained(
                 model_id, subfolder="transformer", torch_dtype=torch.bfloat16
             ).to("cuda")
-            # pipe.enable_model_cpu_offload(device="cuda")
+            pipe.enable_model_cpu_offload(device="cuda")
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
             if args.lora_weight_path:
@@ -167,7 +179,7 @@ if __name__ == "__main__":
 
         # Create validation_videos directory in the same folder as lora_weight_path
         lora_dir = args.lora_weight_path
-        savedir = os.path.join(lora_dir, "validation_videos")
+        savedir = os.path.join(lora_dir, "Train")
         if args.apply_target_noise_only:
             savedir = os.path.join(savedir, args.apply_target_noise_only)
         else:
@@ -181,10 +193,16 @@ if __name__ == "__main__":
         with open(prompt_path, "r") as f:
             prompts = f.readlines()
         
+        dataset_length = len(prompts)
+        start_index = max(1, args.start_index)
+        end_index = args.end_index if args.end_index is not None else dataset_length
+        end_index = min(end_index, dataset_length)
+        print(f"Processing prompts from {start_index} to {end_index} (1-based, inclusive)")
+        
         generator = torch.Generator(device=pipe.device).manual_seed(args.seed)
-        for i, prompt in enumerate(prompts[:args.num_videos]):
-            print(f"Generating video {i+1}: {prompt[:100]}...")
-            video_path = os.path.join(video_dir, f"{i+1}.mp4")
+        for i, prompt in enumerate(prompts[start_index-1:end_index], start=start_index):
+            print(f"Generating video {i}: {prompt[:100]}...")
+            video_path = os.path.join(video_dir, f"{i}.mp4")
             if os.path.exists(os.path.join(savedir, f"output_{i}.mp4")):
                 print(f"Skipping path: {video_path}")
                 continue

@@ -494,7 +494,7 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
         return_hidden_states: Optional[List[int]] = None,
         apply_target_noise_only: str = None,
     ):
-        if apply_target_noise_only == "front-long-none":
+        if "none" in apply_target_noise_only:
             apply_target_noise_only = None
         assert type(apply_target_noise_only) == str if apply_target_noise_only is not None else True, "apply_target_noise_only must be a string"
         if attention_kwargs is not None:
@@ -574,8 +574,11 @@ class CogVideoXTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Cac
             elif apply_target_noise_only == "Fr81-front-long":
                 print("apply_target_noise_only: Fr81-front-long")
                 target_frame_indices = torch.arange(num_frames, device=hidden_states.device) < 10
+            elif apply_target_noise_only == "front-2":
+                print("apply_target_noise_only: front-2")
+                target_frame_indices = torch.arange(num_frames, device=hidden_states.device) < 2
             else:
-                raise ValueError(f"apply_target_noise_only must be either 'back', 'front', or 'front-long', but got {apply_target_noise_only}")
+                raise ValueError(f"apply_target_noise_only must be either 'back', 'front', 'front-long', 'front-last-long', 'front-last-long-long', 'Fr81-front-long', or 'front-2', but got {apply_target_noise_only}")
                 
             target_frame_mask = target_frame_indices.view(1, -1, 1, 1, 1).expand(batch_size, -1, 1, height // self.config.patch_size, width // self.config.patch_size)
             target_frame_mask = target_frame_mask.reshape(batch_size, -1)  # 패치 임베딩 형태로 변환
