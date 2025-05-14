@@ -363,7 +363,7 @@ def process_video(pipe, video, dtype, generator, height, width, apply_target_noi
         init_latents[:, 2] = scheduler.add_noise(init_latents[:, 2], noise[:, 2], torch.tensor([t_50]))
         init_latents[:, 3] = scheduler.add_noise(init_latents[:, 3], noise[:, 3], torch.tensor([t_75]))
         init_latents[:, 4:] = noise[:, 4:]
-    elif apply_target_noise_only == "front-7-noise-none":
+    elif apply_target_noise_only == "front-7-noise-none" or apply_target_noise_only == "front-7-noise-none-buffer":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler
         n_timesteps = timesteps.shape[0]
@@ -646,7 +646,7 @@ def custom_call(
                     if t > t_75:
                         print(f"[DEBUG] not reached t_75")
                         noise_pred[:, 3] = 0
-                elif apply_target_noise_only == "front-7-noise-none":
+                elif apply_target_noise_only == "front-7-noise-none" or apply_target_noise_only == "front-7-noise-none-buffer":
                     noise_pred[:, :4] = 0
                     if t > t_25:
                         print(f"[DEBUG] not reached t_25")

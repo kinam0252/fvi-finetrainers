@@ -790,7 +790,7 @@ class Trainer:
                             noisy_latents[:, 3:4] = torch.where(mask_075, noisy_latents_075, noisy_latents[:, 3:4])
                             noisy_latents[:, 2:3] = torch.where(mask_050, noisy_latents_050, noisy_latents[:, 2:3])
                             noisy_latents[:, 1:2] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 1:2])
-                        elif self.args.apply_target_noise_only == "front-7-noise-none":
+                        elif self.args.apply_target_noise_only == "front-7-noise-none" or self.args.apply_target_noise_only == "front-7-noise-none-buffer":
                             noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
                             mask_075 = (timesteps > t_75).view(-1, 1, 1, 1, 1)
                             mask_050 = (timesteps > t_50).view(-1, 1, 1, 1, 1)
