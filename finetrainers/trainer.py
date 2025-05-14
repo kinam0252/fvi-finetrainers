@@ -760,7 +760,9 @@ class Trainer:
                             noisy_latents[:, :2] = latent_conditions["latents"][:, :2]
                         elif self.args.apply_target_noise_only == "front-4-none":
                             noisy_latents[:, :4] = latent_conditions["latents"][:, :4]
-                        elif self.args.apply_target_noise_only == "front-4-noise-none":
+                        elif self.args.apply_target_noise_only == "front-7-none":
+                            noisy_latents[:, :7] = latent_conditions["latents"][:, :7]
+                        elif self.args.apply_target_noise_only == "front-4-noise-none" or self.args.apply_target_noise_only == "front-4-noise-none-buffer":
                             noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
                             mask_075 = (timesteps > t_75).view(-1, 1, 1, 1, 1)
                             mask_050 = (timesteps > t_50).view(-1, 1, 1, 1, 1)
@@ -818,6 +820,8 @@ class Trainer:
                             noisy_latents[:, 4:5] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 4:5])
                         elif self.args.apply_target_noise_only == "none":
                             pass
+                        elif self.args.apply_target_noise_only == "none-spatial":
+                            pass
                         else:
                             raise NotImplementedError("OFs noise is not implemented")
                     else:
@@ -854,8 +858,13 @@ class Trainer:
                     target = prepare_target(
                         scheduler=self.scheduler, noise=noise, latents=latent_conditions["latents"]
                     )
+                    if self.args.apply_target_noise_only == "front-4-noise-none-buffer":
+                        pred_without_buffer = pred["latents"][:, 4:]
+                        target_without_buffer = target[:, 4:]
+                        loss = weights.float() * (pred_without_buffer.float() - target_without_buffer.float()).pow(2)
+                    else:
+                        loss = weights.float() * (pred["latents"].float() - target.float()).pow(2)
 
-                    loss = weights.float() * (pred["latents"].float() - target.float()).pow(2)
                     # Average loss across all but batch dimension
                     loss = loss.mean(list(range(1, loss.ndim)))
                     # Average loss across batch dimension
@@ -1038,9 +1047,9 @@ class Trainer:
                 "image": {"type": "image", "value": None},
                 "video": {"type": "video", "value": video},
             }
-            for i, (artifact_type, artifact_value) in enumerate(validation_artifacts):
+            for j, (artifact_type, artifact_value) in enumerate(validation_artifacts):
                 if artifact_value:
-                    artifacts.update({f"artifact_{i}": {"type": artifact_type, "value": artifact_value}})
+                    artifacts.update({f"artifact_{j}": {"type": artifact_type, "value": artifact_value}})
             logger.debug(
                 f"Validation artifacts on process {accelerator.process_index}: {list(artifacts.keys())}",
                 main_process_only=False,

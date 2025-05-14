@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument(
         "--num_videos",
         type=int,
-        default=30,
+        default=200,
         help="Number of videos to generate"
     )
     parser.add_argument(
@@ -67,6 +67,11 @@ def parse_args():
         type=int,
         default=None,
         help="End index (1-based, inclusive) of the dataset to process"
+    )
+    parser.add_argument(
+        "--enable_cpu_offload",
+        action="store_true",
+        help="Enable CPU offload"
     )
     return parser.parse_args()
 
@@ -105,7 +110,9 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, 5:-3] = noise[:, 5:-3]
     elif apply_target_noise_only == "front-2":
         init_latents[:, 2:] = noise[:, 2:]
-    elif apply_target_noise_only == "front-4-noise-none":
+    elif apply_target_noise_only == "front-4-none":
+        init_latents[:, 4:] = noise[:, 4:]
+    elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler
         n_timesteps = timesteps.shape[0]
@@ -135,6 +142,10 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, 7:] = noise[:, 7:]
     elif apply_target_noise_only == "none":
         print(F"[DEBUG] applied noise mode : none")
+        pass
+    elif apply_target_noise_only == "none-spatial":
+        init_latents = noise
+    elif apply_target_noise_only == "plain":
         pass
     else:
         raise ValueError(f"apply_target_noise_only must be either 'back' or 'front', but got {apply_target_noise_only}")
@@ -166,12 +177,12 @@ if __name__ == "__main__":
             model_id = "/home/nas4_user/kinamkim/checkpoint/cogvideox-5b"
             pipe = CogVideoXPipeline.from_pretrained(
                 model_id, torch_dtype=torch.bfloat16
-            ).to("cuda")
-            pipe.transformer.to("cpu")
+            )
             pipe.transformer = CogVideoXTransformer3DModel.from_pretrained(
                 model_id, subfolder="transformer", torch_dtype=torch.bfloat16
-            ).to("cuda")
-            pipe.enable_model_cpu_offload(device="cuda")
+            )
+            if args.enable_cpu_offload:
+                pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
             if args.lora_weight_path:
@@ -203,6 +214,10 @@ if __name__ == "__main__":
         print(f"Processing prompts from {start_index} to {end_index} (1-based, inclusive)")
         
         generator = torch.Generator(device=pipe.device).manual_seed(args.seed)
+        
+        # predicted_num_elements = 15 * 1024**3 // 4
+        # null_prompt_tensor = torch.empty(predicted_num_elements, dtype=torch.float32, device='cuda')
+        
         for i, prompt in enumerate(prompts[start_index-1:end_index], start=start_index):
             print(f"Generating video {i}: {prompt[:100]}...")
             video_path = os.path.join(video_dir, f"{i}.mp4")
@@ -210,6 +225,7 @@ if __name__ == "__main__":
                 print(f"Skipping path: {video_path}")
                 continue
             print(f"video_path: {video_path}")
+            pipe.to("cuda")
             init_latents = process_video(pipe, 
                                          video_path, 
                                          torch.bfloat16, 
@@ -218,20 +234,29 @@ if __name__ == "__main__":
                                          args.width,
                                          args.apply_target_noise_only)
             
+            plain_latents = process_video(pipe, 
+                                         video_path, 
+                                         torch.bfloat16, 
+                                         generator, 
+                                         args.height, 
+                                         args.width,
+                                         "plain")
             # video = retrieve_video(pipe, init_latents)
             # export_to_video(video, "test.mp4")
             # assert False, "stop here"
             # front-long 구현해야됨됨
-            init_latents = init_latents.to("cuda")
             if args.apply_target_noise_only == "none":
                 input_latents = None
             else:
                 input_latents = init_latents
+            if args.enable_cpu_offload:
+                pipe.enable_model_cpu_offload()
             video = pipe(prompt, 
                          generator=generator, 
                          width=args.width, 
                          height=args.height, 
                          latents=input_latents,
                          init_latents=init_latents,
+                         plain_latents=plain_latents,
                          apply_target_noise_only=args.apply_target_noise_only).frames[0]
             export_to_video(video, os.path.join(savedir, f"output_{i}.mp4"))

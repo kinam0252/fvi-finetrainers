@@ -158,12 +158,11 @@ if __name__ == "__main__":
             pipe = CogVideoXPipeline.from_pretrained(
                 model_id, torch_dtype=torch.bfloat16
             ).to("cuda")
-            pipe.transformer.to("cpu")
+            # pipe.transformer.to("cpu")
             pipe.transformer = CogVideoXTransformer3DModel.from_pretrained(
                 model_id, subfolder="transformer", torch_dtype=torch.bfloat16
             ).to("cuda")
-            if args.enable_cpu_offload:
-                pipe.enable_model_cpu_offload()
+            # pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
             pipe.vae.enable_tiling()
             if args.lora_weight_path:
@@ -182,8 +181,16 @@ if __name__ == "__main__":
         dataset_name = "/".join(args.dataset_dir.split("/")[-2:])
         savedir = os.path.join(savedir, dataset_name)
         os.makedirs(savedir, exist_ok=True)
+
+        # Create results directory
+        results_dir = "FLOPS/I2V/results"
+        if args.apply_target_noise_only:
+            results_dir = os.path.join(results_dir, args.apply_target_noise_only)
+        else:
+            results_dir = os.path.join(results_dir, "None")
+        os.makedirs(results_dir, exist_ok=True)
         
-        video_dir = os.path.join(args.dataset_dir, "videos")    
+        video_dir = os.path.join(args.dataset_dir, "videos")
         prompt_path = os.path.join(args.dataset_dir, "prompt.txt")
         with open(prompt_path, "r") as f:
             prompts = f.readlines()
@@ -213,18 +220,39 @@ if __name__ == "__main__":
                                          args.width,
                                          "plain")
 
-            if args.enable_cpu_offload:
-                pipe.enable_model_cpu_offload()
+            # pipe.enable_model_cpu_offload()
 
             # video = retrieve_video(pipe, init_latents)
             # export_to_video(video, "test.mp4")
             # assert False, "stop here"
-            # front-long 구현해야됨됨
-            video = pipe(prompt, 
+            # front-long 구현해야됨
+            # if args.apply_target_noise_only == "front-4-noise-none" and i == 0:
+            #     video = pipe(prompt, 
+            #              generator=generator, 
+            #              width=args.width, 
+            #              height=args.height, 
+            #              latents=init_latents,
+            #              plain_latents=plain_latents,
+            #              apply_target_noise_only=args.apply_target_noise_only).frames[0]
+            #     continue
+            from torch.profiler import profile, ProfilerActivity
+            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+                with_flops=True,
+                with_stack=True) as prof:
+                video = pipe(prompt, 
                          generator=generator, 
                          width=args.width, 
                          height=args.height, 
                          latents=init_latents,
                          plain_latents=plain_latents,
                          apply_target_noise_only=args.apply_target_noise_only).frames[0]
-            export_to_video(video, os.path.join(savedir, f"output_{i}.mp4"))
+            
+            profile_path = os.path.join(results_dir, f"profile.txt")
+            with open(profile_path, "w") as f:
+                f.write(prof.key_averages().table(sort_by="flops", row_limit=10))
+            print(prof.key_averages().table(sort_by="flops", row_limit=10))
+            
+            # Save video to both directories
+            export_to_video(video, os.path.join(results_dir, f"output.mp4"))
+            break

@@ -519,6 +519,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
+        plain_latents: Optional[torch.FloatTensor] = None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         output_type: str = "pil",
@@ -713,7 +714,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             return video
 
         print(f"[pipeline] apply_target_noise_only: {apply_target_noise_only}")
-        if apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-7-noise-none":
+        if "noise" in apply_target_noise_only:
             timesteps = self.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
             scheduler = self.scheduler
             n_timesteps = timesteps.shape[0]
@@ -731,7 +732,15 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
 
                 if apply_target_noise_only == "none":
                     noise = randn_tensor(init_latents.shape, generator=generator, device=latents.device, dtype=latents.dtype)
-                    latents[:, :7] = self.scheduler.add_noise(init_latents[:, :7], noise[:, :7], torch.tensor([t], device=latents.device))
+                    latents[:, :4] = self.scheduler.add_noise(init_latents[:, :4], noise[:, :4], torch.tensor([t], device=latents.device))
+                    # latents[:, :7] = self.scheduler.add_noise(init_latents[:, :7], noise[:, :7], torch.tensor([t], device=latents.device))
+
+                if apply_target_noise_only == "none-spatial":
+                    print(f"[DEBUG] fill half width latents")
+                    noise = randn_tensor(latents.shape, generator=generator, device=latents.device, dtype=latents.dtype) # [1, 13, 16, 40, 80]
+                    width_latents = width // 8
+                    half_width_latents = width_latents // 2
+                    latents[:, :, :, :, :half_width_latents] = self.scheduler.add_noise(plain_latents[:, :, :, :, :half_width_latents], noise[:, :, :, :, :half_width_latents], torch.tensor([t], device=latents.device))
 
                 self._current_timestep = t
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -781,7 +790,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         noise_pred[:, :10] = 0
                     elif apply_target_noise_only == "front-2-none":
                         noise_pred[:, :2] = 0
-                    elif apply_target_noise_only == "front-4-noise-none":
+                    elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
                         noise_pred[:, 0] = 0
                         if t > t_25:
                             print(f"[DEBUG] not reached t_25")
@@ -803,7 +812,13 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         if t > t_75:
                             print(f"[DEBUG] not reached t_75")
                             noise_pred[:, 6] = 0
+                    elif apply_target_noise_only == "front-7-none":
+                        noise_pred[:, :7] = 0
+                    elif apply_target_noise_only == "front-4-none":
+                        noise_pred[:, :4] = 0
                     elif apply_target_noise_only == "none":
+                        pass
+                    elif apply_target_noise_only == "none-spatial":
                         pass
                     else:
                         raise NotImplementedError

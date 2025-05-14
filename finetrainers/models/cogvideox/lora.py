@@ -288,6 +288,7 @@ def validation(
     **kwargs,
 ):
     init_latents = process_video(pipeline, video, pipeline.dtype, generator, height, width, apply_target_noise_only)
+    plain_latents = process_video(pipeline, video, pipeline.dtype, generator, height, width, "plain")
     pipeline.custom_call = types.MethodType(custom_call, pipeline)
 
     generation_kwargs = {
@@ -301,6 +302,7 @@ def validation(
         "return_dict": True,
         "output_type": "pil",
         "apply_target_noise_only": apply_target_noise_only,
+        "plain_latents": plain_latents,
     }
     generation_kwargs = {k: v for k, v in generation_kwargs.items() if v is not None}
     output = pipeline.custom_call(**generation_kwargs).frames[0]
@@ -345,7 +347,9 @@ def process_video(pipe, video, dtype, generator, height, width, apply_target_noi
         init_latents[:, 2:] = noise[:, 2:]
     elif apply_target_noise_only == 'front-4-none':
         init_latents[:, 4:] = noise[:, 4:]
-    elif apply_target_noise_only == "front-4-noise-none":
+    elif apply_target_noise_only == "front-7-none":
+        init_latents[:, 7:] = noise[:, 7:]
+    elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler
         n_timesteps = timesteps.shape[0]
@@ -375,6 +379,10 @@ def process_video(pipe, video, dtype, generator, height, width, apply_target_noi
         init_latents[:, 7:] = noise[:, 7:]
     elif apply_target_noise_only == "none":
         init_latents = noise
+    elif apply_target_noise_only == "none-spatial":
+        init_latents = noise
+    elif apply_target_noise_only == "plain":
+        pass
     else:
         raise ValueError(f"apply_target_noise_only must be either 'back' or 'front', but got {apply_target_noise_only}")
     init_latents = init_latents.to(pipe.device)
@@ -449,6 +457,7 @@ def custom_call(
     callback_on_step_end_tensor_inputs: List[str] = ["latents"],
     max_sequence_length: int = 226,
     apply_target_noise_only: bool = False,
+    plain_latents: Optional[torch.FloatTensor] = None,
 ) -> Union[CogVideoXPipelineOutput, Tuple]:
     print("<Custom Call>")
     if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
@@ -552,7 +561,7 @@ def custom_call(
         return video
 
     print(f"[pipeline] apply_target_noise_only: {apply_target_noise_only}")
-    if apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-7-noise-none":
+    if "noise-none" in apply_target_noise_only:
         timesteps = self.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = self.scheduler
         n_timesteps = timesteps.shape[0]
@@ -567,6 +576,14 @@ def custom_call(
         for i, t in enumerate(timesteps):
             if self.interrupt:
                 continue
+
+            if apply_target_noise_only == "none-spatial":
+                from diffusers.utils.torch_utils import randn_tensor
+                noise = randn_tensor(latents.shape, generator=generator, device=latents.device, dtype=latents.dtype) # [1, 13, 16, 40, 80]
+                width_latents = width // 8
+                half_width_latents = width_latents // 2
+                latents[:, :, :, :, :half_width_latents] = self.scheduler.add_noise(plain_latents[:, :, :, :, :half_width_latents].to(latents.device), noise[:, :, :, :, :half_width_latents], torch.tensor([t], device=latents.device))
+
 
             self._current_timestep = t
             latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -616,7 +633,9 @@ def custom_call(
                     noise_pred[:, :2] = 0
                 elif apply_target_noise_only == "front-4-none":
                     noise_pred[:, :4] = 0
-                elif apply_target_noise_only == "front-4-noise-none":
+                elif apply_target_noise_only == "front-7-none":
+                    noise_pred[:, :7] = 0
+                elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
                     noise_pred[:, 0] = 0
                     if t > t_25:
                         print(f"[DEBUG] not reached t_25")
@@ -639,6 +658,8 @@ def custom_call(
                         print(f"[DEBUG] not reached t_75")
                         noise_pred[:, 6] = 0
                 elif apply_target_noise_only == "none":
+                    pass
+                elif apply_target_noise_only == "none-spatial":
                     pass
                 else:
                     raise NotImplementedError
