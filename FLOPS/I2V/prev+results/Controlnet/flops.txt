@@ -1,0 +1,2 @@
+Total GFLOPs: 12502760.285
+Total FLOPs: 1.250e+16

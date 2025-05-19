@@ -139,7 +139,6 @@ def prepare_latents(
     if image_or_video.ndim == 4:
         image_or_video = image_or_video.unsqueeze(2)
     assert image_or_video.ndim == 5, f"Expected 5D tensor, got {image_or_video.ndim}D tensor"
-
     image_or_video = image_or_video.to(device=device, dtype=vae.dtype)
     image_or_video = image_or_video.permute(0, 2, 1, 3, 4)  # [B, C, F, H, W]
     if not precompute:
@@ -363,6 +362,33 @@ def process_video(pipe, video, dtype, generator, height, width, apply_target_noi
         init_latents[:, 2] = scheduler.add_noise(init_latents[:, 2], noise[:, 2], torch.tensor([t_50]))
         init_latents[:, 3] = scheduler.add_noise(init_latents[:, 3], noise[:, 3], torch.tensor([t_75]))
         init_latents[:, 4:] = noise[:, 4:]
+    elif apply_target_noise_only == "front-4-noise-none-only25":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        #t_100 = timesteps[0]
+        t_25 = timesteps[int(n_timesteps * (1 - 0.25))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        #init_latents[:, :, 0] = scheduler.add_noise(init_latents[:, :, 0], noise[:, :, 0], torch.tensor([t_100]))
+        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_25]))
+        init_latents[:, 4:] = noise[:, 4:]
+    elif apply_target_noise_only == "front-4-noise-none-only50":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        t_50 = timesteps[int(n_timesteps * (1 - 0.5))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_50]))
+        init_latents[:, 4:] = noise[:, 4:]
+    elif apply_target_noise_only == "front-4-noise-none-only75":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        t_75 = timesteps[int(n_timesteps * (1 - 0.75))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_75]))
+        init_latents[:, 4:] = noise[:, 4:]
+        
     elif apply_target_noise_only == "front-7-noise-none" or apply_target_noise_only == "front-7-noise-none-buffer":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler
@@ -376,6 +402,30 @@ def process_video(pipe, video, dtype, generator, height, width, apply_target_noi
         init_latents[:, 4] = scheduler.add_noise(init_latents[:, 4], noise[:, 4], torch.tensor([t_25]))
         init_latents[:, 5] = scheduler.add_noise(init_latents[:, 5], noise[:, 5], torch.tensor([t_50]))
         init_latents[:, 6] = scheduler.add_noise(init_latents[:, 6], noise[:, 6], torch.tensor([t_75]))
+        init_latents[:, 7:] = noise[:, 7:]
+    elif apply_target_noise_only == "front-7-noise-none-only25":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        t_25 = timesteps[int(n_timesteps * (1 - 0.25))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_25]))
+        init_latents[:, 7:] = noise[:, 7:]
+    elif apply_target_noise_only == "front-7-noise-none-only50":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        t_50 = timesteps[int(n_timesteps * (1 - 0.5))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_50]))
+        init_latents[:, 7:] = noise[:, 7:]
+    elif apply_target_noise_only == "front-7-noise-none-only75":
+        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
+        scheduler = pipe.scheduler
+        n_timesteps = timesteps.shape[0]
+        t_75 = timesteps[int(n_timesteps * (1 - 0.75))]
+        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
+        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_75]))
         init_latents[:, 7:] = noise[:, 7:]
     elif apply_target_noise_only == "none":
         init_latents = noise
@@ -646,6 +696,21 @@ def custom_call(
                     if t > t_75:
                         print(f"[DEBUG] not reached t_75")
                         noise_pred[:, 3] = 0
+                elif apply_target_noise_only == "front-4-noise-none-only25":
+                    noise_pred[:, 0] = 0
+                    if t > t_25:
+                        print(f"[DEBUG] not reached t_25")
+                        noise_pred[:, 1:4] = 0
+                elif apply_target_noise_only == "front-4-noise-none-only50":
+                    noise_pred[:, 0] = 0
+                    if t > t_50:
+                        print(f"[DEBUG] not reached t_50")
+                        noise_pred[:, 1:4] = 0
+                elif apply_target_noise_only == "front-4-noise-none-only75":
+                    noise_pred[:, 0] = 0
+                    if t > t_75:
+                        print(f"[DEBUG] not reached t_75")
+                        noise_pred[:, 1:4] = 0
                 elif apply_target_noise_only == "front-7-noise-none" or apply_target_noise_only == "front-7-noise-none-buffer":
                     noise_pred[:, :4] = 0
                     if t > t_25:
@@ -657,6 +722,22 @@ def custom_call(
                     if t > t_75:
                         print(f"[DEBUG] not reached t_75")
                         noise_pred[:, 6] = 0
+                elif apply_target_noise_only == "front-7-noise-none-only25":
+                    noise_pred[:, :4] = 0
+                    if t > t_25:
+                        print(f"[DEBUG] not reached t_25")
+                        noise_pred[:, 4:7] = 0
+                elif apply_target_noise_only == "front-7-noise-none-only50":
+                    noise_pred[:, :4] = 0
+                    if t > t_50:
+                        print(f"[DEBUG] not reached t_50")
+                        noise_pred[:, 4:7] = 0
+                elif apply_target_noise_only == "front-7-noise-none-only75":
+                    noise_pred[:, :4] = 0
+                    if t > t_75:
+                        print(f"[DEBUG] not reached t_75")
+                        noise_pred[:, 4:7] = 0
+                
                 elif apply_target_noise_only == "none":
                     pass
                 elif apply_target_noise_only == "none-spatial":

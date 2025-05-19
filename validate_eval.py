@@ -112,6 +112,8 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, 2:] = noise[:, 2:]
     elif apply_target_noise_only == "front-4-none":
         init_latents[:, 4:] = noise[:, 4:]
+    elif apply_target_noise_only == "front-7-none":
+        init_latents[:, 7:] = noise[:, 7:]
     elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler

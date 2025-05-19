@@ -790,6 +790,39 @@ class Trainer:
                             noisy_latents[:, 3:4] = torch.where(mask_075, noisy_latents_075, noisy_latents[:, 3:4])
                             noisy_latents[:, 2:3] = torch.where(mask_050, noisy_latents_050, noisy_latents[:, 2:3])
                             noisy_latents[:, 1:2] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 1:2])
+                        elif self.args.apply_target_noise_only == "front-4-noise-none-only25":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_025 = (timesteps > t_25).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_025 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 1:4],
+                                latents=latent_conditions["latents"][:, 1:4],
+                                timesteps=t_25,
+                            )
+                            noisy_latents[:, 1:4] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 1:4])
+                        elif self.args.apply_target_noise_only == "front-4-noise-none-only50":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_050 = (timesteps > t_50).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_050 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 1:4],
+                                latents=latent_conditions["latents"][:, 1:4],
+                                timesteps=t_50,
+                            )
+                            noisy_latents[:, 1:4] = torch.where(mask_050, noisy_latents_050, noisy_latents[:, 1:4])
+                        elif self.args.apply_target_noise_only == "front-4-noise-none-only75":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_075 = (timesteps > t_75).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_075 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 1:4],
+                                latents=latent_conditions["latents"][:, 1:4],
+                                timesteps=t_75,
+                            )
+                            noisy_latents[:, 1:4] = torch.where(mask_075, noisy_latents_075, noisy_latents[:, 1:4])
                         elif self.args.apply_target_noise_only == "front-7-noise-none" or self.args.apply_target_noise_only == "front-7-noise-none-buffer":
                             noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
                             mask_075 = (timesteps > t_75).view(-1, 1, 1, 1, 1)
@@ -818,6 +851,42 @@ class Trainer:
                             noisy_latents[:, 6:7] = torch.where(mask_075, noisy_latents_075, noisy_latents[:, 6:7])
                             noisy_latents[:, 5:6] = torch.where(mask_050, noisy_latents_050, noisy_latents[:, 5:6])
                             noisy_latents[:, 4:5] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 4:5])
+                        elif self.args.apply_target_noise_only == "front-7-noise-none-only25":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_025 = (timesteps > t_25).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_025 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 4:7],
+                                latents=latent_conditions["latents"][:, 4:7],
+                                timesteps=t_25,
+                            )
+                            
+                            noisy_latents[:, 4:7] = torch.where(mask_025, noisy_latents_025, noisy_latents[:, 4:7])
+                        elif self.args.apply_target_noise_only == "front-7-noise-none-only50":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_050 = (timesteps > t_50).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_050 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 4:7],
+                                latents=latent_conditions["latents"][:, 4:7],
+                                timesteps=t_50,
+                            )
+                            
+                            noisy_latents[:, 4:7] = torch.where(mask_050, noisy_latents_050, noisy_latents[:, 4:7])
+                        elif self.args.apply_target_noise_only == "front-7-noise-none-only75":
+                            noisy_latents[:, 0] = latent_conditions["latents"][:, 0]
+                            mask_075 = (timesteps > t_75).view(-1, 1, 1, 1, 1)
+                            
+                            noisy_latents_075 = self.model_config["calculate_noisy_latents"](
+                                scheduler=self.scheduler,
+                                noise=noise[:, 4:7],
+                                latents=latent_conditions["latents"][:, 4:7],
+                                timesteps=t_75,
+                            )
+                            
+                            noisy_latents[:, 4:7] = torch.where(mask_075, noisy_latents_075, noisy_latents[:, 4:7])
                         elif self.args.apply_target_noise_only == "none":
                             pass
                         elif self.args.apply_target_noise_only == "none-spatial":

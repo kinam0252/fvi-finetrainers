@@ -26,7 +26,7 @@ def save_flops_txt(profile_path, total_gflops, total_flops):
     print(f"Saved: {out_path}")
 
 def main():
-    profile_path = "/home/nas4_user/kinamkim/video-in-context-lora/fvi-finetrainers/FLOPS/I2V/results/none-spatial/profile.txt"
+    profile_path = "/home/nas4_user/kinamkim/video-in-context-lora/fvi-finetrainers/FLOPS/I2V/results/Controlnet/profile.txt"
     total_gflops, total_flops = parse_profile_txt(profile_path)
     save_flops_txt(profile_path, total_gflops, total_flops)
 
