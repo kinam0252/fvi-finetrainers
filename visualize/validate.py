@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument(
         "--num_videos",
         type=int,
-        default=200,
+        default=1,
         help="Number of videos to generate"
     )
     parser.add_argument(
@@ -57,21 +57,17 @@ def parse_args():
         help="Apply noise only to target frame"
     )
     parser.add_argument(
-        "--start_index",
-        type=int,
-        default=1,
-        help="Start index (1-based) of the dataset to process"
-    )
-    parser.add_argument(
-        "--end_index",
-        type=int,
-        default=None,
-        help="End index (1-based, inclusive) of the dataset to process"
-    )
-    parser.add_argument(
         "--enable_cpu_offload",
-        action="store_true",
+        type=bool,
+        default=False,
         help="Enable CPU offload"
+    )
+    parser.add_argument(
+        "--video_index",
+        type=int,
+        required=False,
+        default=None,
+        help="Index of the video to process (1-based, e.g., 1 for the first video). If not set, processes all."
     )
     return parser.parse_args()
 
@@ -102,7 +98,7 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, :-1] = noise[:, :-1]
     elif apply_target_noise_only == "front":
         init_latents[:, 1:] = noise[:, 1:]
-    elif apply_target_noise_only == "front-long" or apply_target_noise_only == "front-long-none":
+    elif apply_target_noise_only == "front-long":
         init_latents[:, 6:] = noise[:, 6:]
     elif apply_target_noise_only == "front-last-long":
         init_latents[:, 6:-1] = noise[:, 6:-1]
@@ -110,11 +106,9 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, 5:-3] = noise[:, 5:-3]
     elif apply_target_noise_only == "front-2":
         init_latents[:, 2:] = noise[:, 2:]
-    elif apply_target_noise_only == "front-4-none":
-        init_latents[:, 4:] = noise[:, 4:]
     elif apply_target_noise_only == "front-7-none":
         init_latents[:, 7:] = noise[:, 7:]
-    elif apply_target_noise_only == "front-4-noise-none" or apply_target_noise_only == "front-4-noise-none-buffer":
+    elif apply_target_noise_only == "front-4-noise-none":
         timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
         scheduler = pipe.scheduler
         n_timesteps = timesteps.shape[0]
@@ -142,59 +136,6 @@ def process_video(pipe, video_path, dtype, generator, height, width, apply_targe
         init_latents[:, 5] = scheduler.add_noise(init_latents[:, 5], noise[:, 5], torch.tensor([t_50]))
         init_latents[:, 6] = scheduler.add_noise(init_latents[:, 6], noise[:, 6], torch.tensor([t_75]))
         init_latents[:, 7:] = noise[:, 7:]
-    elif apply_target_noise_only == "front-4-noise-none-only25":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        #t_100 = timesteps[0]
-        t_25 = timesteps[int(n_timesteps * (1 - 0.25))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        #init_latents[:, :, 0] = scheduler.add_noise(init_latents[:, :, 0], noise[:, :, 0], torch.tensor([t_100]))
-        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_25]))
-        init_latents[:, 4:] = noise[:, 4:]
-    elif apply_target_noise_only == "front-4-noise-none-only50":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        t_50 = timesteps[int(n_timesteps * (1 - 0.5))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_50]))
-        init_latents[:, 4:] = noise[:, 4:]
-    elif apply_target_noise_only == "front-4-noise-none-only75":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        t_75 = timesteps[int(n_timesteps * (1 - 0.75))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        init_latents[:, 1:4] = scheduler.add_noise(init_latents[:, 1:4], noise[:, 1:4], torch.tensor([t_75]))
-        init_latents[:, 4:] = noise[:, 4:]
-    elif apply_target_noise_only == "front-7-noise-none-only25":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        t_25 = timesteps[int(n_timesteps * (1 - 0.25))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_25]))
-        init_latents[:, 7:] = noise[:, 7:]
-    elif apply_target_noise_only == "front-7-noise-none-only50":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        t_50 = timesteps[int(n_timesteps * (1 - 0.5))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_50]))
-        init_latents[:, 7:] = noise[:, 7:]
-    elif apply_target_noise_only == "front-7-noise-none-only75":
-        timesteps = pipe.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
-        scheduler = pipe.scheduler
-        n_timesteps = timesteps.shape[0]
-        t_75 = timesteps[int(n_timesteps * (1 - 0.75))]
-        print(f"[DEBUG] applied noise mode : {apply_target_noise_only}")
-        init_latents[:, 4:7] = scheduler.add_noise(init_latents[:, 4:7], noise[:, 4:7], torch.tensor([t_75]))
-        init_latents[:, 7:] = noise[:, 7:]
-    elif apply_target_noise_only == "none":
-        print(F"[DEBUG] applied noise mode : none")
-        pass
     elif apply_target_noise_only == "none-spatial":
         init_latents = noise
     elif apply_target_noise_only == "plain":
@@ -224,15 +165,16 @@ if __name__ == "__main__":
 
         elif args.model_type == "cogvideo":
             from pipeline import CogVideoXPipeline
-            from finetrainers.models.cogvideox.model import CogVideoXTransformer3DModel
+            from model import CogVideoXTransformer3DModel
             from diffusers.utils import export_to_video, load_video
             model_id = "/home/nas4_user/kinamkim/checkpoint/cogvideox-5b"
             pipe = CogVideoXPipeline.from_pretrained(
                 model_id, torch_dtype=torch.bfloat16
-            )
+            ).to("cuda")
+            pipe.transformer.to("cpu")
             pipe.transformer = CogVideoXTransformer3DModel.from_pretrained(
                 model_id, subfolder="transformer", torch_dtype=torch.bfloat16
-            )
+            ).to("cuda")
             if args.enable_cpu_offload:
                 pipe.enable_model_cpu_offload()
             pipe.vae.enable_slicing()
@@ -243,37 +185,30 @@ if __name__ == "__main__":
             else:
                 args.lora_weight_path = "output/base/dummy.safetensors"
 
-        # Create validation_videos directory in the same folder as lora_weight_path
-        lora_dir = args.lora_weight_path
-        savedir = os.path.join(lora_dir, "Eval")
-        if args.apply_target_noise_only:
-            savedir = os.path.join(savedir, args.apply_target_noise_only)
-        else:
-            savedir = os.path.join(savedir, "None")
-        dataset_name = "/".join(args.dataset_dir.split("/")[-2:])
-        savedir = os.path.join(savedir, dataset_name)
-        os.makedirs(savedir, exist_ok=True)
-        
-        video_dir = os.path.join(args.dataset_dir, "videos")
+        # New: get last folder name from lora_weight_path (which is a directory)
+        last_folder = os.path.basename(os.path.normpath(args.lora_weight_path))
+        outputs_root = os.path.join(os.getcwd(), "outputs", last_folder)
+
+        video_dir = os.path.join(args.dataset_dir, "videos")    
         prompt_path = os.path.join(args.dataset_dir, "prompt.txt")
         with open(prompt_path, "r") as f:
             prompts = f.readlines()
         
-        dataset_length = len(prompts)
-        start_index = max(1, args.start_index)
-        end_index = args.end_index if args.end_index is not None else dataset_length
-        end_index = min(end_index, dataset_length)
-        print(f"Processing prompts from {start_index} to {end_index} (1-based, inclusive)")
-        
         generator = torch.Generator(device=pipe.device).manual_seed(args.seed)
-        
-        # predicted_num_elements = 15 * 1024**3 // 4
-        # null_prompt_tensor = torch.empty(predicted_num_elements, dtype=torch.float32, device='cuda')
-        
-        for i, prompt in enumerate(prompts[start_index-1:end_index], start=start_index):
-            print(f"Generating video {i}: {prompt[:100]}...")
-            video_path = os.path.join(video_dir, f"{i}.mp4")
-            if os.path.exists(os.path.join(savedir, f"output_{i}.mp4")):
+        # Determine which indices to process
+        if args.video_index is not None:
+            indices = [args.video_index - 1]  # user gives 1-based, convert to 0-based
+        else:
+            indices = list(range(min(args.num_videos, len(prompts))))
+        for i in indices:
+            prompt = prompts[i]
+            print(f"Generating video {i+1}: {prompt[:100]}...")
+            video_path = os.path.join(video_dir, f"{i+1}.mp4")
+            # Create save_dir as outputs/<last_folder>/<i>
+            save_dir = os.path.join(outputs_root, str(i))
+            os.makedirs(save_dir, exist_ok=True)
+            save_path = os.path.join(save_dir, "video.mp4")
+            if os.path.exists(save_path):
                 print(f"Skipping path: {video_path}")
                 continue
             print(f"video_path: {video_path}")
@@ -293,22 +228,17 @@ if __name__ == "__main__":
                                          args.height, 
                                          args.width,
                                          "plain")
-            # video = retrieve_video(pipe, init_latents)
-            # export_to_video(video, "test.mp4")
-            # assert False, "stop here"
-            # front-long 구현해야됨됨
-            if args.apply_target_noise_only == "none":
-                input_latents = None
-            else:
-                input_latents = init_latents
+
             if args.enable_cpu_offload:
                 pipe.enable_model_cpu_offload()
+
             video = pipe(prompt, 
                          generator=generator, 
                          width=args.width, 
                          height=args.height, 
-                         latents=input_latents,
-                         init_latents=init_latents,
+                         latents=init_latents,
                          plain_latents=plain_latents,
-                         apply_target_noise_only=args.apply_target_noise_only).frames[0]
-            export_to_video(video, os.path.join(savedir, f"output_{i}.mp4"))
+                         apply_target_noise_only=args.apply_target_noise_only,
+                         save_dir=save_dir).frames[0]
+            export_to_video(video, save_path)
+            break  # Only process one video if video_index is set

@@ -30,6 +30,9 @@ from diffusers.utils import is_torch_xla_available, logging, replace_example_doc
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.video_processor import VideoProcessor
 from diffusers.pipelines.cogvideo.pipeline_output import CogVideoXPipelineOutput
+import types
+import PIL.Image
+import os
 
 
 if is_torch_xla_available():
@@ -63,7 +66,115 @@ EXAMPLE_DOC_STRING = """
         >>> export_to_video(video, "output.mp4", fps=8)
         ```
 """
+import math
+from dataclasses import dataclass
+from typing import List, Optional, Tuple, Union
+import numpy as np
+import torch
+from diffusers.configuration_utils import ConfigMixin, register_to_config
+from diffusers.utils import BaseOutput
+from diffusers.schedulers.scheduling_utils import KarrasDiffusionSchedulers, SchedulerMixin
+from diffusers.schedulers.scheduling_ddim_cogvideox import DDIMSchedulerOutput
 
+def predict_x0(
+    self,
+    model_output: torch.Tensor,
+    timestep: int,
+    sample: torch.Tensor,
+    eta: float = 0.0,
+    use_clipped_model_output: bool = False,
+    generator=None,
+    variance_noise: Optional[torch.Tensor] = None,
+    return_dict: bool = True,
+) -> Union[DDIMSchedulerOutput, Tuple]:
+    """
+    Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
+    process from the learned model outputs (most often the predicted noise).
+
+    Args:
+        model_output (`torch.Tensor`):
+            The direct output from learned diffusion model.
+        timestep (`float`):
+            The current discrete timestep in the diffusion chain.
+        sample (`torch.Tensor`):
+            A current instance of a sample created by the diffusion process.
+        eta (`float`):
+            The weight of noise for added noise in diffusion step.
+        use_clipped_model_output (`bool`, defaults to `False`):
+            If `True`, computes "corrected" `model_output` from the clipped predicted original sample. Necessary
+            because predicted original sample is clipped to [-1, 1] when `self.config.clip_sample` is `True`. If no
+            clipping has happened, "corrected" `model_output` would coincide with the one provided as input and
+            `use_clipped_model_output` has no effect.
+        generator (`torch.Generator`, *optional*):
+            A random number generator.
+        variance_noise (`torch.Tensor`):
+            Alternative to generating noise with `generator` by directly providing the noise for the variance
+            itself. Useful for methods such as [`CycleDiffusion`].
+        return_dict (`bool`, *optional*, defaults to `True`):
+            Whether or not to return a [`~schedulers.scheduling_ddim.DDIMSchedulerOutput`] or `tuple`.
+
+    Returns:
+        [`~schedulers.scheduling_ddim.DDIMSchedulerOutput`] or `tuple`:
+            If return_dict is `True`, [`~schedulers.scheduling_ddim.DDIMSchedulerOutput`] is returned, otherwise a
+            tuple is returned where the first element is the sample tensor.
+
+    """
+    if self.num_inference_steps is None:
+        raise ValueError(
+            "Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler"
+        )
+
+    # See formulas (12) and (16) of DDIM paper https://huggingface.co/papers/2010.02502
+    # Ideally, read DDIM paper in-detail understanding
+
+    # Notation (<variable name> -> <name in paper>
+    # - pred_noise_t -> e_theta(x_t, t)
+    # - pred_original_sample -> f_theta(x_t, t) or x_0
+    # - std_dev_t -> sigma_t
+    # - eta -> η
+    # - pred_sample_direction -> "direction pointing to x_t"
+    # - pred_prev_sample -> "x_t-1"
+
+    # 1. get previous step value (=t-1)
+    prev_timestep = timestep - self.config.num_train_timesteps // self.num_inference_steps
+
+    # 2. compute alphas, betas
+    alpha_prod_t = self.alphas_cumprod[timestep]
+    alpha_prod_t_prev = self.alphas_cumprod[prev_timestep] if prev_timestep >= 0 else self.final_alpha_cumprod
+
+    beta_prod_t = 1 - alpha_prod_t
+
+    # 3. compute predicted original sample from predicted noise also called
+    # "predicted x_0" of formula (12) from https://huggingface.co/papers/2010.02502
+    # To make style tests pass, commented out `pred_epsilon` as it is an unused variable
+    if self.config.prediction_type == "epsilon":
+        assert False, "stop here"
+        # pred_epsilon = model_output
+    elif self.config.prediction_type == "sample":
+        assert False, "stop here"
+        pred_original_sample = model_output
+        # pred_epsilon = (sample - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
+    elif self.config.prediction_type == "v_prediction":
+        pred_original_sample = (alpha_prod_t**0.5) * sample - (beta_prod_t**0.5) * model_output
+        # pred_epsilon = (alpha_prod_t**0.5) * model_output + (beta_prod_t**0.5) * sample
+    else:
+        raise ValueError(
+            f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, `sample`, or"
+            " `v_prediction`"
+        )
+    # Replace frames where model_output is all zero with sample's corresponding frames
+    # model_output: (B, F, ...)
+    # sample: (B, F, ...)
+    if model_output.ndim >= 2:
+        # Check for all-zero frames along batch and channel dims
+        # Assume shape (B, F, C, H, W) or (B, F, ...)
+        # We'll sum over batch and all other dims except F
+        dims = list(range(0, model_output.ndim))
+        dims.remove(1)  # keep frame dim
+        zero_mask = (model_output.abs().sum(dim=dims) == 0)  # (F,)
+        if zero_mask.any():
+            pred_original_sample[:, zero_mask] = sample[:, zero_mask].to(pred_original_sample.dtype)
+    return pred_original_sample
 
 # Similar to diffusers.pipelines.hunyuandit.pipeline_hunyuandit.get_resize_crop_region_for_grid
 def get_resize_crop_region_for_grid(src, tgt_width, tgt_height):
@@ -503,7 +614,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         return self._interrupt
 
     @torch.no_grad()
-    @replace_example_docstring(EXAMPLE_DOC_STRING)
     def __call__(
         self,
         prompt: Optional[Union[str, List[str]]] = None,
@@ -532,87 +642,14 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         max_sequence_length: int = 226,
         apply_target_noise_only: bool = False,
         init_latents: Optional[torch.FloatTensor] = None,
+        save_dir: Optional[str] = None,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
 
         Args:
-            prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts to guide the image generation. If not defined, one has to pass `prompt_embeds`.
-                instead.
-            negative_prompt (`str` or `List[str]`, *optional*):
-                The prompt or prompts not to guide the image generation. If not defined, one has to pass
-                `negative_prompt_embeds` instead. Ignored when not using guidance (i.e., ignored if `guidance_scale` is
-                less than `1`).
-            height (`int`, *optional*, defaults to self.transformer.config.sample_height * self.vae_scale_factor_spatial):
-                The height in pixels of the generated image. This is set to 480 by default for the best results.
-            width (`int`, *optional*, defaults to self.transformer.config.sample_height * self.vae_scale_factor_spatial):
-                The width in pixels of the generated image. This is set to 720 by default for the best results.
-            num_frames (`int`, defaults to `48`):
-                Number of frames to generate. Must be divisible by self.vae_scale_factor_temporal. Generated video will
-                contain 1 extra frame because CogVideoX is conditioned with (num_seconds * fps + 1) frames where
-                num_seconds is 6 and fps is 8. However, since videos can be saved at any fps, the only condition that
-                needs to be satisfied is that of divisibility mentioned above.
-            num_inference_steps (`int`, *optional*, defaults to 50):
-                The number of denoising steps. More denoising steps usually lead to a higher quality image at the
-                expense of slower inference.
-            timesteps (`List[int]`, *optional*):
-                Custom timesteps to use for the denoising process with schedulers which support a `timesteps` argument
-                in their `set_timesteps` method. If not defined, the default behavior when `num_inference_steps` is
-                passed will be used. Must be in descending order.
-            guidance_scale (`float`, *optional*, defaults to 7.0):
-                Guidance scale as defined in [Classifier-Free Diffusion Guidance](https://arxiv.org/abs/2207.12598).
-                `guidance_scale` is defined as `w` of equation 2. of [Imagen
-                Paper](https://arxiv.org/pdf/2205.11487.pdf). Guidance scale is enabled by setting `guidance_scale >
-                1`. Higher guidance scale encourages to generate images that are closely linked to the text `prompt`,
-                usually at the expense of lower image quality.
-            num_videos_per_prompt (`int`, *optional*, defaults to 1):
-                The number of videos to generate per prompt.
-            generator (`torch.Generator` or `List[torch.Generator]`, *optional*):
-                One or a list of [torch generator(s)](https://pytorch.org/docs/stable/generated/torch.Generator.html)
-                to make generation deterministic.
-            latents (`torch.FloatTensor`, *optional*):
-                Pre-generated noisy latents, sampled from a Gaussian distribution, to be used as inputs for image
-                generation. Can be used to tweak the same generation with different prompts. If not provided, a latents
-                tensor will ge generated by sampling using the supplied random `generator`.
-            prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt weighting. If not
-                provided, text embeddings will be generated from `prompt` input argument.
-            negative_prompt_embeds (`torch.FloatTensor`, *optional*):
-                Pre-generated negative text embeddings. Can be used to easily tweak text inputs, *e.g.* prompt
-                weighting. If not provided, negative_prompt_embeds will be generated from `negative_prompt` input
-                argument.
-            output_type (`str`, *optional*, defaults to `"pil"`):
-                The output format of the generate image. Choose between
-                [PIL](https://pillow.readthedocs.io/en/stable/): `PIL.Image.Image` or `np.array`.
-            return_dict (`bool`, *optional*, defaults to `True`):
-                Whether or not to return a [`~pipelines.stable_diffusion_xl.StableDiffusionXLPipelineOutput`] instead
-                of a plain tuple.
-            attention_kwargs (`dict`, *optional*):
-                A kwargs dictionary that if specified is passed along to the `AttentionProcessor` as defined under
-                `self.processor` in
-                [diffusers.models.attention_processor](https://github.com/huggingface/diffusers/blob/main/src/diffusers/models/attention_processor.py).
-            callback_on_step_end (`Callable`, *optional*):
-                A function that calls at the end of each denoising steps during the inference. The function is called
-                with the following arguments: `callback_on_step_end(self: DiffusionPipeline, step: int, timestep: int,
-                callback_kwargs: Dict)`. `callback_kwargs` will include a list of all tensors as specified by
-                `callback_on_step_end_tensor_inputs`.
-            callback_on_step_end_tensor_inputs (`List`, *optional*):
-                The list of tensor inputs for the `callback_on_step_end` function. The tensors specified in the list
-                will be passed as `callback_kwargs` argument. You will only be able to include variables listed in the
-                `._callback_tensor_inputs` attribute of your pipeline class.
-            max_sequence_length (`int`, defaults to `226`):
-                Maximum sequence length in encoded prompt. Must be consistent with
-                `self.transformer.config.max_text_seq_length` otherwise may lead to poor results.
-
-        Examples:
-
-        Returns:
-            [`~pipelines.cogvideo.pipeline_cogvideox.CogVideoXPipelineOutput`] or `tuple`:
-            [`~pipelines.cogvideo.pipeline_cogvideox.CogVideoXPipelineOutput`] if `return_dict` is True, otherwise a
-            `tuple`. When returning a tuple, the first element is a list with the generated images.
+            ... (docstring unchanged) ...
         """
-
         if isinstance(callback_on_step_end, (PipelineCallback, MultiPipelineCallbacks)):
             callback_on_step_end_tensor_inputs = callback_on_step_end.tensor_inputs
 
@@ -718,13 +755,22 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
             timesteps = self.scheduler.timesteps # torch.Size([1000]), torch.float32, 999~0
             scheduler = self.scheduler
             n_timesteps = timesteps.shape[0]
-            #t_100 = timesteps[0]
             t_25 = timesteps[int(n_timesteps * (1 - 0.25))]
             t_50 = timesteps[int(n_timesteps * (1 - 0.5))]
             t_75 = timesteps[int(n_timesteps * (1 - 0.75))]
 
+        # Inject predict_x0 into self.scheduler
+        self.scheduler.predict_x0 = types.MethodType(predict_x0, self.scheduler)
+
+        def get_videos_from_latents(latents, additional_frames=0):
+            assert additional_frames == 0, "additional_frames is not supported yet"
+            latents = latents[:, additional_frames:]
+            latents = latents.to(prompt_embeds.dtype)
+            video = self.decode_latents(latents)
+            video = self.video_processor.postprocess_video(video=video, output_type="pil")[0]
+            return video
+
         with self.progress_bar(total=num_inference_steps) as progress_bar:
-            # for DPM-solver++
             old_pred_original_sample = None
             for i, t in enumerate(timesteps):
                 if self.interrupt:
@@ -733,11 +779,10 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 if apply_target_noise_only == "none":
                     noise = randn_tensor(init_latents.shape, generator=generator, device=latents.device, dtype=latents.dtype)
                     latents[:, :4] = self.scheduler.add_noise(init_latents[:, :4], noise[:, :4], torch.tensor([t], device=latents.device))
-                    # latents[:, :7] = self.scheduler.add_noise(init_latents[:, :7], noise[:, :7], torch.tensor([t], device=latents.device))
 
                 if apply_target_noise_only == "none-spatial":
                     print(f"[DEBUG] fill half width latents")
-                    noise = randn_tensor(latents.shape, generator=generator, device=latents.device, dtype=latents.dtype) # [1, 13, 16, 40, 80]
+                    noise = randn_tensor(latents.shape, generator=generator, device=latents.device, dtype=latents.dtype)
                     width_latents = width // 8
                     half_width_latents = width_latents // 2
                     latents[:, :, :, :, :half_width_latents] = self.scheduler.add_noise(plain_latents[:, :, :, :, :half_width_latents], noise[:, :, :, :, :half_width_latents], torch.tensor([t], device=latents.device))
@@ -746,14 +791,8 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
-                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
-                # video = retrieve_video(latents)
-                # from diffusers.utils import export_to_video
-                # export_to_video(video, f"my_test/video_{i}.mp4")
-
-                # predict noise model_output
                 noise_pred = self.transformer(
                     hidden_states=latent_model_input,
                     encoder_hidden_states=prompt_embeds,
@@ -765,14 +804,12 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                 )[0]
                 noise_pred = noise_pred.float()
 
-                # perform guidance
                 if use_dynamic_cfg:
                     self._guidance_scale = 1 + guidance_scale * (
                         (1 - math.cos(math.pi * ((num_inference_steps - t.item()) / num_inference_steps) ** 5.0)) / 2
                     )
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-                    
                     noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
                     if apply_target_noise_only == "front":
                         noise_pred[:, 0] = 0
@@ -816,7 +853,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         if t > t_75:
                             print(f"[DEBUG] not reached t_75")
                             noise_pred[:, 1:4] = 0
-                    
                     elif apply_target_noise_only == "front-7-noise-none":
                         noise_pred[:, :4] = 0
                         if t > t_25:
@@ -843,9 +879,6 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         if t > t_75:
                             print(f"[DEBUG] not reached t_75")
                             noise_pred[:, 4:7] = 0
-                            
-                            
-
                     elif apply_target_noise_only == "front-7-none":
                         noise_pred[:, :7] = 0
                     elif apply_target_noise_only == "front-4-none":
@@ -856,9 +889,16 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         pass
                     else:
                         raise NotImplementedError
-                    
 
-                # compute the previous noisy sample x_t -> x_t-1
+                video = get_videos_from_latents(latents, additional_frames)
+
+                # Save each frame individually in frames_{i}/ only for specific i
+                if i in [0, 12, 25, 37, 49]:
+                    frame_dir = f"{save_dir}/frames_{i}"
+                    os.makedirs(frame_dir, exist_ok=True)
+                    for idx, frame in enumerate(video, 1):
+                        frame.save(os.path.join(frame_dir, f"{idx}.png"))
+
                 if not isinstance(self.scheduler, CogVideoXDPMScheduler):
                     latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                 else:
@@ -871,9 +911,15 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         **extra_step_kwargs,
                         return_dict=False,
                     )
+
+                video = get_videos_from_latents(latents, additional_frames)
+                frame_dir = f"{save_dir}/frames_final"
+                os.makedirs(frame_dir, exist_ok=True)
+                for idx, frame in enumerate(video, 1):
+                    frame.save(os.path.join(frame_dir, f"{idx}.png"))
+
                 latents = latents.to(prompt_embeds.dtype)
 
-                # call the callback, if provided
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
                     for k in callback_on_step_end_tensor_inputs:
@@ -893,14 +939,12 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         self._current_timestep = None
 
         if not output_type == "latent":
-            # Discard any padding frames that were added for CogVideoX 1.5
             latents = latents[:, additional_frames:]
             video = self.decode_latents(latents)
             video = self.video_processor.postprocess_video(video=video, output_type=output_type)
         else:
             video = latents
 
-        # Offload all models
         self.maybe_free_model_hooks()
 
         if not return_dict:
