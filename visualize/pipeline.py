@@ -643,6 +643,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         apply_target_noise_only: bool = False,
         init_latents: Optional[torch.FloatTensor] = None,
         save_dir: Optional[str] = None,
+        save_frames: bool = False,
     ) -> Union[CogVideoXPipelineOutput, Tuple]:
         """
         Function invoked when calling the pipeline for generation.
@@ -890,10 +891,11 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                     else:
                         raise NotImplementedError
 
-                video = get_videos_from_latents(latents, additional_frames)
+                
 
                 # Save each frame individually in frames_{i}/ only for specific i
-                if i in [0, 12, 25, 37, 49]:
+                if save_frames and i in [0, 12, 25, 37]:
+                    video = get_videos_from_latents(latents, additional_frames)
                     frame_dir = f"{save_dir}/frames_{i}"
                     os.makedirs(frame_dir, exist_ok=True)
                     for idx, frame in enumerate(video, 1):
@@ -912,11 +914,12 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
                         return_dict=False,
                     )
 
-                video = get_videos_from_latents(latents, additional_frames)
-                frame_dir = f"{save_dir}/frames_final"
-                os.makedirs(frame_dir, exist_ok=True)
-                for idx, frame in enumerate(video, 1):
-                    frame.save(os.path.join(frame_dir, f"{idx}.png"))
+                if save_frames and i == len(timesteps) - 1:
+                    video = get_videos_from_latents(latents, additional_frames)
+                    frame_dir = f"{save_dir}/frames_final"
+                    os.makedirs(frame_dir, exist_ok=True)
+                    for idx, frame in enumerate(video, 1):
+                        frame.save(os.path.join(frame_dir, f"{idx}.png"))
 
                 latents = latents.to(prompt_embeds.dtype)
 

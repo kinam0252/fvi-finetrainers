@@ -24,7 +24,6 @@ def main():
     try:
         args = parse_arguments()
         trainer = Trainer(args)
-
         trainer.prepare_dataset()
         trainer.prepare_models()
         trainer.prepare_precomputations()
